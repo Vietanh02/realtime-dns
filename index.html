@@ -1,0 +1,1215 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DNS Status Board</title>
+<meta name="description" content="Kiểm tra bản ghi DNS của một danh sách domain qua DNS over HTTPS và hiển thị trạng thái hiện tại.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='13' fill='none' stroke='%230e7490' stroke-width='2.5'/%3E%3Cellipse cx='16' cy='16' rx='6' ry='13' fill='none' stroke='%230e7490' stroke-width='2'/%3E%3Cpath d='M3 16h26' stroke='%230e7490' stroke-width='2'/%3E%3C/svg%3E">
+<style>
+/* Layout: một cột dọc — bảng điều khiển truy vấn ở trên, dải tổng hợp trạng thái, rồi bảng kết quả mở rộng được. */
+:root{
+  --bg:#f4f6f8;
+  --surface:#ffffff;
+  --surface-2:#eef2f5;
+  --border:#d8dfe6;
+  --border-strong:#bcc8d2;
+  --fg:#14202a;
+  --fg-muted:#5a6b7a;
+  --accent:#0e7490;
+  --accent-ink:#ffffff;
+  --accent-soft:#dff1f6;
+  --ok:#157f3d;
+  --ok-soft:#dcf2e3;
+  --warn:#9a5b06;
+  --warn-soft:#fbeed4;
+  --crit:#b3261e;
+  --crit-soft:#fadddb;
+  --info:#5b3bb5;
+  --info-soft:#e8e2fa;
+  --shadow:0 1px 2px rgba(20,32,42,.06), 0 8px 24px rgba(20,32,42,.05);
+  --font-ui:"IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono:"IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#0e1419;
+    --surface:#151d24;
+    --surface-2:#1c262e;
+    --border:#2a373f;
+    --border-strong:#3b4a54;
+    --fg:#e4ecf1;
+    --fg-muted:#94a7b4;
+    --accent:#4fc3dd;
+    --accent-ink:#06222b;
+    --accent-soft:#113039;
+    --ok:#5cd38a;
+    --ok-soft:#10301f;
+    --warn:#f0b35e;
+    --warn-soft:#352616;
+    --crit:#f58a81;
+    --crit-soft:#3a1c1a;
+    --info:#b9a6f5;
+    --info-soft:#241f3b;
+    --shadow:0 1px 2px rgba(0,0,0,.4), 0 10px 28px rgba(0,0,0,.35);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0e1419;
+  --surface:#151d24;
+  --surface-2:#1c262e;
+  --border:#2a373f;
+  --border-strong:#3b4a54;
+  --fg:#e4ecf1;
+  --fg-muted:#94a7b4;
+  --accent:#4fc3dd;
+  --accent-ink:#06222b;
+  --accent-soft:#113039;
+  --ok:#5cd38a;
+  --ok-soft:#10301f;
+  --warn:#f0b35e;
+  --warn-soft:#352616;
+  --crit:#f58a81;
+  --crit-soft:#3a1c1a;
+  --info:#b9a6f5;
+  --info-soft:#241f3b;
+  --shadow:0 1px 2px rgba(0,0,0,.4), 0 10px 28px rgba(0,0,0,.35);
+  color-scheme: dark;
+}
+
+*{box-sizing:border-box}
+html,body{margin:0}
+body{
+  background:var(--bg);
+  color:var(--fg);
+  font-family:var(--font-ui);
+  font-size:15px;
+  line-height:1.5;
+  -webkit-text-size-adjust:100%;
+}
+.wrap{max-width:1180px;margin:0 auto;padding-inline:16px;padding-block:0 48px}
+
+/* ---------- header ---------- */
+.topbar{
+  border-bottom:1px solid var(--border);
+  background:var(--surface);
+  position:sticky;top:0;z-index:20;
+}
+.topbar-inner{
+  max-width:1180px;margin:0 auto;padding-inline:16px;padding-block:14px;
+  display:flex;align-items:center;gap:16px;flex-wrap:wrap;
+}
+.brand{display:flex;align-items:center;gap:11px;min-width:0}
+.brand svg{flex:none}
+.brand h1{
+  font-size:17px;font-weight:600;margin:0;letter-spacing:-.01em;
+}
+.brand p{margin:0;font-size:12.5px;color:var(--fg-muted)}
+.topbar-spacer{flex:1 1 auto}
+.theme-toggle{
+  font:inherit;font-size:13px;color:var(--fg-muted);background:var(--surface-2);
+  border:1px solid var(--border);border-radius:999px;padding:6px 13px;cursor:pointer;
+  display:flex;align-items:center;gap:7px;
+}
+.theme-toggle:hover{border-color:var(--border-strong);color:var(--fg)}
+
+/* ---------- panels ---------- */
+.panel{
+  background:var(--surface);border:1px solid var(--border);border-radius:10px;
+  box-shadow:var(--shadow);margin-top:20px;
+}
+.panel-head{
+  display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;
+  padding:14px 18px 0;
+}
+.panel-head h2{margin:0;font-size:14px;font-weight:600;letter-spacing:.02em}
+.panel-head .hint{margin:0;font-size:12.5px;color:var(--fg-muted)}
+.panel-body{padding:14px 18px 18px;display:flex;flex-direction:column;gap:14px}
+
+label.field{display:flex;flex-direction:column;gap:6px;min-width:0}
+.field-label{
+  font-size:11px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;
+  color:var(--fg-muted);
+}
+textarea,select,input[type="text"],input[type="number"]{
+  font-family:var(--font-mono);font-size:13.5px;color:var(--fg);
+  background:var(--bg);border:1px solid var(--border);border-radius:7px;
+  padding:9px 11px;width:100%;
+}
+textarea{min-height:148px;resize:vertical;line-height:1.65}
+select{font-family:var(--font-ui);font-size:13.5px}
+:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+
+.controls{
+  display:grid;gap:14px;
+  grid-template-columns:repeat(auto-fit,minmax(168px,1fr));
+  align-items:end;
+}
+.types{display:flex;flex-wrap:wrap;gap:6px}
+.types input{position:absolute;opacity:0;width:1px;height:1px}
+.types label{
+  font-family:var(--font-mono);font-size:12.5px;
+  border:1px solid var(--border);border-radius:6px;padding:5px 10px;cursor:pointer;
+  background:var(--bg);color:var(--fg-muted);user-select:none;
+}
+.types input:checked + label{
+  background:var(--accent-soft);border-color:var(--accent);color:var(--accent);font-weight:600;
+}
+.types input:focus-visible + label{outline:2px solid var(--accent);outline-offset:1px}
+
+.actions{display:flex;flex-wrap:wrap;gap:9px;align-items:center}
+button{font-family:var(--font-ui)}
+.btn{
+  font-size:13.5px;font-weight:500;border-radius:7px;padding:9px 16px;cursor:pointer;
+  border:1px solid var(--border);background:var(--surface-2);color:var(--fg);
+}
+.btn:hover{border-color:var(--border-strong)}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+.btn-primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink);font-weight:600}
+.btn-primary:hover{filter:brightness(1.08)}
+.btn-sm{font-size:12.5px;padding:6px 11px}
+.kbd{
+  font-family:var(--font-mono);font-size:11px;color:var(--fg-muted);
+  border:1px solid var(--border);border-radius:4px;padding:1px 5px;background:var(--bg);
+}
+
+/* ---------- progress + summary ---------- */
+.runbar{display:none;flex-direction:column;gap:7px;margin-top:16px}
+.runbar.on{display:flex}
+.runbar-top{display:flex;justify-content:space-between;font-size:12.5px;color:var(--fg-muted)}
+.track{height:4px;border-radius:999px;background:var(--surface-2);overflow:hidden}
+.track span{display:block;height:100%;background:var(--accent);width:0;transition:width .18s ease}
+
+.summary{
+  display:grid;gap:10px;margin-top:16px;
+  grid-template-columns:repeat(auto-fit,minmax(132px,1fr));
+}
+.stat{
+  background:var(--surface);border:1px solid var(--border);border-radius:9px;
+  padding:11px 13px;text-align:left;cursor:pointer;font:inherit;color:inherit;
+  display:flex;flex-direction:column;gap:2px;
+}
+.stat:hover{border-color:var(--border-strong)}
+.stat[aria-pressed="true"]{border-color:var(--accent);box-shadow:inset 0 0 0 1px var(--accent)}
+.stat .num{font-family:var(--font-mono);font-size:22px;font-weight:600;font-variant-numeric:tabular-nums;line-height:1.1}
+.stat .cap{font-size:11.5px;color:var(--fg-muted);letter-spacing:.03em}
+.stat.ok .num{color:var(--ok)}
+.stat.warn .num{color:var(--warn)}
+.stat.crit .num{color:var(--crit)}
+.stat.info .num{color:var(--info)}
+
+/* ---------- toolbar ---------- */
+.toolbar{
+  display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:18px;
+}
+.toolbar .search{flex:1 1 220px;min-width:0}
+.toolbar .search input{font-family:var(--font-ui);background:var(--surface)}
+.toolbar .right{display:flex;gap:8px;flex-wrap:wrap;margin-left:auto}
+
+/* ---------- table ---------- */
+.table-wrap{
+  margin-top:12px;background:var(--surface);border:1px solid var(--border);
+  border-radius:10px;box-shadow:var(--shadow);overflow-x:auto;
+}
+table{border-collapse:collapse;width:100%;min-width:720px}
+thead th{
+  text-align:left;font-size:10.5px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--fg-muted);padding:11px 14px;border-bottom:1px solid var(--border);
+  background:var(--surface-2);white-space:nowrap;position:sticky;top:0;
+}
+tbody td{padding:11px 14px;border-bottom:1px solid var(--border);vertical-align:top;font-size:13.5px}
+tbody tr:last-child td{border-bottom:0}
+tbody tr.row:hover{background:var(--surface-2)}
+td.c-status{width:130px}
+td.c-domain{font-family:var(--font-mono);font-size:13px;word-break:break-all;min-width:0}
+td.c-num{font-family:var(--font-mono);font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap;color:var(--fg-muted);font-size:12.5px}
+td.c-recs{min-width:0}
+
+.pill{
+  display:inline-flex;align-items:center;gap:6px;border-radius:999px;
+  font-size:11.5px;font-weight:600;letter-spacing:.02em;padding:3px 10px 3px 8px;white-space:nowrap;
+}
+.pill::before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor}
+.pill.ok{color:var(--ok);background:var(--ok-soft)}
+.pill.mismatch{color:var(--warn);background:var(--warn-soft)}
+.pill.empty{color:var(--info);background:var(--info-soft)}
+.pill.nxdomain{color:var(--crit);background:var(--crit-soft)}
+.pill.failed{color:var(--crit);background:var(--crit-soft)}
+.pill.error{color:var(--crit);background:var(--crit-soft)}
+.pill.pending{color:var(--fg-muted);background:var(--surface-2)}
+.pill.running{color:var(--accent);background:var(--accent-soft)}
+
+.recs{display:flex;flex-wrap:wrap;gap:5px}
+.rec{
+  font-family:var(--font-mono);font-size:12px;border:1px solid var(--border);
+  border-radius:5px;padding:2px 7px;background:var(--bg);white-space:nowrap;
+  max-width:100%;overflow:hidden;text-overflow:ellipsis;
+}
+.rec b{font-weight:600;color:var(--accent);margin-right:5px}
+.rec.bad{border-color:var(--crit);color:var(--crit)}
+.rec.good{border-color:var(--ok)}
+.rec-none{font-size:12.5px;color:var(--fg-muted);font-style:italic}
+.flagset{display:flex;gap:5px;margin-top:5px;flex-wrap:wrap}
+.flag{
+  font-family:var(--font-mono);font-size:10.5px;letter-spacing:.04em;
+  color:var(--fg-muted);border:1px solid var(--border);border-radius:4px;padding:0 5px;
+}
+.flag.on{color:var(--ok);border-color:var(--ok)}
+
+.rowbtn{
+  background:none;border:0;color:var(--fg-muted);cursor:pointer;font-size:12.5px;
+  padding:2px 4px;border-radius:4px;
+}
+.rowbtn:hover{color:var(--accent)}
+tr.detail td{background:var(--surface-2);padding:0}
+.detail-box{padding:13px 16px;display:flex;flex-direction:column;gap:11px}
+.detail-grp h4{
+  margin:0 0 5px;font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--fg-muted);font-weight:600;
+}
+.detail-grp ul{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:3px}
+.detail-grp li{font-family:var(--font-mono);font-size:12.5px;word-break:break-all}
+.detail-grp li .ttl{color:var(--fg-muted)}
+.cmp-table{width:auto;min-width:0;border:1px solid var(--border);border-radius:7px;overflow:hidden}
+.cmp-table td,.cmp-table th{padding:6px 11px;font-size:12.5px;border-bottom:1px solid var(--border)}
+.cmp-table th{background:var(--surface);text-transform:none;letter-spacing:0;font-size:11.5px;position:static}
+
+.empty-state{padding:38px 20px;text-align:center;color:var(--fg-muted);font-size:13.5px}
+.note{font-size:12.5px;color:var(--fg-muted);margin:10px 2px 0}
+.note code{font-family:var(--font-mono);font-size:12px;background:var(--surface-2);padding:1px 5px;border-radius:4px}
+.toast{
+  position:fixed;left:50%;bottom:24px;transform:translateX(-50%) translateY(8px);
+  background:var(--fg);color:var(--bg);font-size:13px;padding:9px 16px;border-radius:8px;
+  opacity:0;pointer-events:none;transition:opacity .18s ease, transform .18s ease;z-index:50;
+}
+.toast.on{opacity:1;transform:translateX(-50%) translateY(0)}
+footer{max-width:1180px;margin:0 auto;padding:26px 16px 0;font-size:12.5px;color:var(--fg-muted)}
+@media (prefers-reduced-motion: reduce){*{transition:none !important;animation:none !important}}
+@media (max-width:640px){
+  .panel-body{padding:13px 13px 16px}
+  .panel-head{padding:13px 13px 0}
+  .stat .num{font-size:19px}
+}
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-inner">
+    <div class="brand">
+      <svg width="26" height="26" viewBox="0 0 32 32" aria-hidden="true">
+        <circle cx="16" cy="16" r="12.5" fill="none" stroke="currentColor" stroke-width="2" opacity=".85"/>
+        <ellipse cx="16" cy="16" rx="5.8" ry="12.5" fill="none" stroke="currentColor" stroke-width="1.6" opacity=".55"/>
+        <path d="M3.5 16h25" stroke="currentColor" stroke-width="1.6" opacity=".55"/>
+      </svg>
+      <div>
+        <h1>DNS Status Board</h1>
+        <p>Tra cứu DNS over HTTPS cho nhiều domain cùng lúc</p>
+      </div>
+    </div>
+    <div class="topbar-spacer"></div>
+    <button class="theme-toggle" id="themeBtn" type="button" aria-label="Đổi giao diện sáng/tối">
+      <span id="themeIcon">◐</span><span id="themeText">Theo hệ thống</span>
+    </button>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <section class="panel">
+    <div class="panel-head">
+      <h2>Danh sách domain</h2>
+      <p class="hint">Mỗi dòng một domain. Thêm <code>= giá trị</code> để đối chiếu với kết quả mong đợi. Dòng bắt đầu bằng <code>#</code> được bỏ qua.</p>
+    </div>
+    <div class="panel-body">
+      <label class="field">
+        <span class="field-label">Domain</span>
+        <textarea id="domains" spellcheck="false" autocapitalize="off" autocomplete="off"
+          placeholder="example.com&#10;api.example.com = 203.0.113.10&#10;www.example.com = edge.example.net"></textarea>
+      </label>
+
+      <div class="controls">
+        <div class="field">
+          <span class="field-label">Loại bản ghi</span>
+          <div class="types" id="types"></div>
+        </div>
+        <label class="field">
+          <span class="field-label">Resolver</span>
+          <select id="resolver">
+            <option value="cloudflare">Cloudflare · 1.1.1.1</option>
+            <option value="google">Google · 8.8.8.8</option>
+            <option value="quad9">Quad9 · 9.9.9.9</option>
+            <option value="adguard">AdGuard · 94.140.14.14</option>
+            <option value="proxy">Qua Pages Function (/api/dns)</option>
+          </select>
+        </label>
+        <label class="field">
+          <span class="field-label">Số truy vấn song song</span>
+          <input type="number" id="concurrency" min="1" max="24" step="1" value="8">
+        </label>
+        <label class="field">
+          <span class="field-label">Timeout (giây)</span>
+          <input type="number" id="timeout" min="1" max="30" step="1" value="8">
+        </label>
+        <label class="field">
+          <span class="field-label">Tự động chạy lại</span>
+          <select id="autorefresh">
+            <option value="0">Tắt</option>
+            <option value="30">Mỗi 30 giây</option>
+            <option value="60">Mỗi 1 phút</option>
+            <option value="300">Mỗi 5 phút</option>
+            <option value="900">Mỗi 15 phút</option>
+          </select>
+        </label>
+      </div>
+
+      <div class="actions">
+        <button class="btn btn-primary" id="runBtn" type="button">Kiểm tra</button>
+        <button class="btn" id="stopBtn" type="button" disabled>Dừng</button>
+        <button class="btn btn-sm" id="sampleBtn" type="button">Nạp danh sách mẫu</button>
+        <button class="btn btn-sm" id="clearBtn" type="button">Xoá kết quả</button>
+        <span class="kbd">Ctrl + Enter</span>
+      </div>
+    </div>
+  </section>
+
+  <div class="runbar" id="runbar">
+    <div class="runbar-top">
+      <span id="runLabel">Đang truy vấn…</span>
+      <span id="runCount">0 / 0</span>
+    </div>
+    <div class="track"><span id="runFill"></span></div>
+  </div>
+
+  <section class="summary" id="summary" hidden></section>
+
+  <div class="toolbar" id="toolbar" hidden>
+    <label class="field search">
+      <input type="text" id="search" placeholder="Lọc theo domain hoặc giá trị bản ghi…" autocomplete="off">
+    </label>
+    <div class="right">
+      <button class="btn btn-sm" id="copyCsv" type="button">Sao chép CSV</button>
+      <button class="btn btn-sm" id="copyJson" type="button">Sao chép JSON</button>
+      <button class="btn btn-sm" id="dlCsv" type="button">Tải CSV</button>
+    </div>
+  </div>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th scope="col">Trạng thái</th>
+          <th scope="col">Domain</th>
+          <th scope="col">Bản ghi</th>
+          <th scope="col" style="text-align:right">TTL</th>
+          <th scope="col" style="text-align:right">Thời gian</th>
+          <th scope="col" style="width:34px"></th>
+        </tr>
+      </thead>
+      <tbody id="tbody">
+        <tr><td colspan="6"><div class="empty-state">Nhập danh sách domain rồi bấm <strong>Kiểm tra</strong>.</div></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p class="note" id="resolverNote"></p>
+
+  <footer>
+    Truy vấn chạy trực tiếp từ trình duyệt bằng DNS over HTTPS (RFC 8484 / JSON API). Kết quả phản ánh cache của resolver công cộng, không phải của authoritative name server.
+  </footer>
+</div>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script>
+(function () {
+  "use strict";
+
+  /* ------------------------------------------------------------------ *
+   * Hằng số
+   * ------------------------------------------------------------------ */
+
+  var TYPE_BY_NAME = {
+    A: 1, NS: 2, CNAME: 5, SOA: 6, PTR: 12, MX: 15, TXT: 16, AAAA: 28,
+    SRV: 33, DS: 43, DNSKEY: 48, TLSA: 52, SVCB: 64, HTTPS: 65, CAA: 257
+  };
+  var TYPE_BY_NUM = {};
+  Object.keys(TYPE_BY_NAME).forEach(function (k) { TYPE_BY_NUM[TYPE_BY_NAME[k]] = k; });
+
+  var OFFERED_TYPES = ["A", "AAAA", "CNAME", "MX", "NS", "TXT", "CAA", "SOA"];
+  var DEFAULT_TYPES = ["A", "AAAA", "CNAME"];
+
+  var RCODE = {
+    0: "NOERROR", 1: "FORMERR", 2: "SERVFAIL", 3: "NXDOMAIN",
+    4: "NOTIMP", 5: "REFUSED", 9: "NOTAUTH"
+  };
+
+  var RESOLVERS = {
+    cloudflare: { label: "Cloudflare 1.1.1.1", url: "https://cloudflare-dns.com/dns-query", json: true },
+    google:     { label: "Google 8.8.8.8",     url: "https://dns.google/resolve",           json: false },
+    quad9:      { label: "Quad9 9.9.9.9",      url: "https://dns.quad9.net:5053/dns-query", json: true },
+    adguard:    { label: "AdGuard DNS",        url: "https://dns.adguard-dns.com/resolve",  json: false },
+    proxy:      { label: "Pages Function",     url: "/api/dns",                             json: false, proxy: true }
+  };
+
+  var STATUS_META = {
+    ok:       { text: "Hoạt động",    cls: "ok" },
+    mismatch: { text: "Sai giá trị",  cls: "mismatch" },
+    empty:    { text: "Không bản ghi", cls: "empty" },
+    nxdomain: { text: "NXDOMAIN",     cls: "nxdomain" },
+    failed:   { text: "Lỗi DNS",      cls: "failed" },
+    error:    { text: "Không gọi được", cls: "error" },
+    pending:  { text: "Chờ",          cls: "pending" },
+    running:  { text: "Đang tra",     cls: "running" }
+  };
+
+  var SAMPLE = [
+    "# Mỗi dòng một domain. Dùng \"= giá trị\" để đối chiếu kết quả mong đợi.",
+    "one.one.one.one = 1.1.1.1",
+    "cloudflare.com",
+    "vnexpress.net",
+    "github.com",
+    "mail.google.com",
+    "domain-khong-ton-tai-7f3a9.vn"
+  ].join("\n");
+
+  var LS_KEY = "dns-status-board.v1";
+  var EMBEDDED = (function () { try { return window.self !== window.top; } catch (e) { return true; } })();
+
+  /* ------------------------------------------------------------------ *
+   * Tiện ích
+   * ------------------------------------------------------------------ */
+
+  var $ = function (id) { return document.getElementById(id); };
+
+  function esc(s) {
+    return String(s).replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+
+  function normHost(s) {
+    return String(s).trim().toLowerCase().replace(/\.$/, "");
+  }
+
+  function toast(msg) {
+    var el = $("toast");
+    el.textContent = msg;
+    el.classList.add("on");
+    clearTimeout(el._t);
+    el._t = setTimeout(function () { el.classList.remove("on"); }, 2200);
+  }
+
+  function store(obj) {
+    try { localStorage.setItem(LS_KEY, JSON.stringify(obj)); } catch (e) { /* bỏ qua */ }
+  }
+  function restore() {
+    try {
+      var raw = localStorage.getItem(LS_KEY);
+      return raw ? JSON.parse(raw) : null;
+    } catch (e) { return null; }
+  }
+
+  /* ------------------------------------------------------------------ *
+   * Phân tích danh sách domain
+   * ------------------------------------------------------------------ */
+
+  function parseList(text) {
+    var out = [];
+    var seen = {};
+    String(text).split(/\r?\n/).forEach(function (raw) {
+      var line = raw.trim();
+      if (!line || line.charAt(0) === "#") return;
+      var hash = line.indexOf(" #");
+      if (hash > -1) line = line.slice(0, hash).trim();
+
+      // Rút URL dán nguyên về đúng hostname trước khi tách giá trị mong đợi,
+      // để query string kiểu ?x=1 không bị hiểu nhầm là dấu "=" phân tách.
+      line = line.replace(/[a-z][a-z0-9+.-]*:\/\/\S+/i, function (u) {
+        return u.replace(/^[a-z][a-z0-9+.-]*:\/\//i, "")
+                .split(/[\/?#]/)[0]
+                .replace(/:\d+$/, "");
+      });
+
+      var expected = [];
+      var m = line.split(/\s*(?:->|=>|=)\s*/);
+      var host = m[0];
+      if (m.length > 1) {
+        expected = m.slice(1).join(" ").split(/[,\s]+/).map(normHost).filter(Boolean);
+      }
+
+      host = host.trim();
+      // Chấp nhận cả URL dán nguyên: https://host:443/path
+      host = host.replace(/^[a-z][a-z0-9+.-]*:\/\//i, "");
+      host = host.split("/")[0].split("?")[0];
+      host = host.replace(/:\d+$/, "");
+      host = normHost(host);
+      if (!host) return;
+      if (!/^[a-z0-9_.\-¡-￿]+\.[a-z0-9\-¡-￿]{2,}$/i.test(host)) {
+        out.push({ host: host, expected: expected, invalid: true });
+        return;
+      }
+      if (seen[host]) return;
+      seen[host] = true;
+      out.push({ host: host, expected: expected, invalid: false });
+    });
+    return out;
+  }
+
+  /* ------------------------------------------------------------------ *
+   * Truy vấn DoH
+   * ------------------------------------------------------------------ */
+
+  function buildUrl(resolverKey, name, type) {
+    var r = RESOLVERS[resolverKey];
+    var qs = "?name=" + encodeURIComponent(name) + "&type=" + encodeURIComponent(type);
+    if (r.proxy) qs += "&resolver=cloudflare";
+    return r.url + qs;
+  }
+
+  function queryOne(resolverKey, name, type, timeoutMs, signal) {
+    var r = RESOLVERS[resolverKey];
+    var headers = r.json ? { accept: "application/dns-json" } : { accept: "application/json" };
+    var ctl = new AbortController();
+    var timer = setTimeout(function () { ctl.abort("timeout"); }, timeoutMs);
+    if (signal) {
+      if (signal.aborted) ctl.abort("cancelled");
+      else signal.addEventListener("abort", function () { ctl.abort("cancelled"); }, { once: true });
+    }
+    var t0 = (performance && performance.now) ? performance.now() : Date.now();
+
+    return fetch(buildUrl(resolverKey, name, type), { headers: headers, signal: ctl.signal })
+      .then(function (res) {
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        return res.json();
+      })
+      .then(function (data) {
+        var t1 = (performance && performance.now) ? performance.now() : Date.now();
+        var answers = (data.Answer || []).map(function (a) {
+          return {
+            name: a.name, type: TYPE_BY_NUM[a.type] || String(a.type),
+            ttl: a.TTL, data: a.data
+          };
+        });
+        return {
+          type: type,
+          rcode: typeof data.Status === "number" ? data.Status : -1,
+          rcodeName: RCODE[data.Status] || ("RCODE " + data.Status),
+          ad: !!data.AD, cd: !!data.CD, tc: !!data.TC,
+          answers: answers,
+          authority: (data.Authority || []).map(function (a) {
+            return { type: TYPE_BY_NUM[a.type] || String(a.type), ttl: a.TTL, data: a.data };
+          }),
+          comment: data.Comment || "",
+          ms: Math.round(t1 - t0)
+        };
+      })
+      .catch(function (err) {
+        var t1 = (performance && performance.now) ? performance.now() : Date.now();
+        var reason = (err && (err.name === "AbortError" || err.name === "TimeoutError"))
+          ? (ctl.signal.reason === "cancelled" ? "Đã huỷ" : "Quá thời gian chờ")
+          : (err && err.message) ? err.message : "Lỗi mạng";
+        return { type: type, rcode: null, error: reason, answers: [], ms: Math.round(t1 - t0) };
+      })
+      .then(function (out) { clearTimeout(timer); return out; });
+  }
+
+  /* ------------------------------------------------------------------ *
+   * Đánh giá trạng thái một domain
+   * ------------------------------------------------------------------ */
+
+  function evaluate(entry, results) {
+    var all = [];
+    results.forEach(function (r) { all = all.concat(r.answers); });
+
+    var hasError = results.some(function (r) { return r.error; });
+    var anyAnswer = all.length > 0;
+    var rcodes = results.filter(function (r) { return r.rcode !== null && r.rcode !== undefined; });
+    var allNx = rcodes.length > 0 && rcodes.every(function (r) { return r.rcode === 3; });
+    var anyBad = rcodes.some(function (r) { return r.rcode !== 0 && r.rcode !== 3; });
+
+    var status;
+    if (hasError && !anyAnswer) status = "error";
+    else if (allNx) status = "nxdomain";
+    else if (anyBad && !anyAnswer) status = "failed";
+    else if (!anyAnswer) status = "empty";
+    else status = "ok";
+
+    var matched = null;
+    if (status === "ok" && entry.expected && entry.expected.length) {
+      var values = all.map(function (a) { return normHost(a.data); });
+      matched = entry.expected.every(function (exp) {
+        return values.indexOf(exp) > -1;
+      });
+      if (!matched) status = "mismatch";
+    }
+
+    var ttls = all.map(function (a) { return a.ttl; }).filter(function (v) { return typeof v === "number"; });
+    return {
+      status: status,
+      matched: matched,
+      answers: all,
+      minTtl: ttls.length ? Math.min.apply(null, ttls) : null,
+      ms: results.reduce(function (m, r) { return Math.max(m, r.ms || 0); }, 0),
+      ad: results.some(function (r) { return r.ad; }),
+      results: results,
+      checkedAt: new Date()
+    };
+  }
+
+  /* ------------------------------------------------------------------ *
+   * Trạng thái ứng dụng
+   * ------------------------------------------------------------------ */
+
+  var state = {
+    rows: [],          // { entry, eval|null, status }
+    filter: null,
+    search: "",
+    running: false,
+    abort: null,
+    timer: null,
+    expanded: {}
+  };
+
+  /* ------------------------------------------------------------------ *
+   * Hiển thị
+   * ------------------------------------------------------------------ */
+
+  function fmtTtl(sec) {
+    if (sec === null || sec === undefined) return "—";
+    if (sec < 60) return sec + "s";
+    if (sec < 3600) return Math.round(sec / 60) + "m";
+    if (sec < 86400) return (Math.round(sec / 360) / 10) + "h";
+    return (Math.round(sec / 8640) / 10) + "d";
+  }
+
+  function pill(status) {
+    var meta = STATUS_META[status] || STATUS_META.pending;
+    return '<span class="pill ' + meta.cls + '">' + esc(meta.text) + "</span>";
+  }
+
+  function recChips(row) {
+    var ev = row.eval;
+    if (!ev) return '<span class="rec-none">—</span>';
+    if (!ev.answers.length) {
+      var first = ev.results[0] || {};
+      if (first.error) return '<span class="rec-none">' + esc(first.error) + "</span>";
+      var names = ev.results.map(function (r) { return r.rcodeName; });
+      var uniq = names.filter(function (v, i) { return names.indexOf(v) === i; });
+      return '<span class="rec-none">' + esc(uniq.join(" / ")) + "</span>";
+    }
+    var expected = row.entry.expected || [];
+    var shown = ev.answers.slice(0, 6).map(function (a) {
+      var cls = "rec";
+      if (expected.length) {
+        cls += (expected.indexOf(normHost(a.data)) > -1) ? " good" : " bad";
+      }
+      return '<span class="' + cls + '"><b>' + esc(a.type) + "</b>" + esc(a.data) + "</span>";
+    });
+    if (ev.answers.length > 6) {
+      shown.push('<span class="rec">+' + (ev.answers.length - 6) + "</span>");
+    }
+    var html = '<div class="recs">' + shown.join("") + "</div>";
+    if (row.entry.expected.length) {
+      html += '<div class="flagset"><span class="flag' + (ev.status === "mismatch" ? "" : " on") + '">'
+        + (ev.status === "mismatch" ? "KHÁC MONG ĐỢI" : "ĐÚNG MONG ĐỢI") + "</span>"
+        + (ev.ad ? '<span class="flag on">DNSSEC</span>' : "") + "</div>";
+    } else if (ev.ad) {
+      html += '<div class="flagset"><span class="flag on">DNSSEC</span></div>';
+    }
+    return html;
+  }
+
+  function detailHtml(row) {
+    var ev = row.eval;
+    if (!ev) return "";
+    var parts = [];
+    ev.results.forEach(function (r) {
+      var body;
+      if (r.error) {
+        body = '<ul><li style="color:var(--crit)">' + esc(r.error) + "</li></ul>";
+      } else if (r.answers.length) {
+        body = "<ul>" + r.answers.map(function (a) {
+          return "<li>" + esc(a.name) + " <span class=\"ttl\">" + fmtTtl(a.ttl) + "</span> "
+            + esc(a.type) + " → " + esc(a.data) + "</li>";
+        }).join("") + "</ul>";
+      } else {
+        var auth = (r.authority || []).filter(function (a) { return a.type === "SOA"; })[0];
+        body = '<ul><li class="ttl">' + esc(r.rcodeName)
+          + (auth ? " · SOA: " + esc(auth.data) : " · không có bản ghi")
+          + "</li></ul>";
+      }
+      parts.push('<div class="detail-grp"><h4>' + esc(r.type) + " · " + r.ms + " ms"
+        + (r.ad ? " · AD" : "") + "</h4>" + body + "</div>");
+    });
+
+    if (row.entry.expected.length) {
+      parts.push('<div class="detail-grp"><h4>Giá trị mong đợi</h4><ul>'
+        + row.entry.expected.map(function (e) {
+            var hit = ev.answers.some(function (a) { return normHost(a.data) === e; });
+            return "<li>" + (hit ? "✓ " : "✗ ") + esc(e) + "</li>";
+          }).join("") + "</ul></div>");
+    }
+
+    parts.push('<div class="detail-grp"><h4>Đối chiếu nhiều resolver</h4>'
+      + '<button class="btn btn-sm" data-compare="' + esc(row.entry.host) + '" type="button">So sánh 4 resolver</button>'
+      + '<div data-cmp-out="' + esc(row.entry.host) + '" style="margin-top:9px"></div></div>');
+
+    return '<div class="detail-box">' + parts.join("") + "</div>";
+  }
+
+  function visibleRows() {
+    var q = state.search.trim().toLowerCase();
+    return state.rows.filter(function (row) {
+      if (state.filter && (!row.eval || row.eval.status !== state.filter)) return false;
+      if (!q) return true;
+      if (row.entry.host.indexOf(q) > -1) return true;
+      if (row.eval) {
+        return row.eval.answers.some(function (a) { return String(a.data).toLowerCase().indexOf(q) > -1; });
+      }
+      return false;
+    });
+  }
+
+  function render() {
+    var tbody = $("tbody");
+    var rows = visibleRows();
+
+    if (!state.rows.length) {
+      tbody.innerHTML = '<tr><td colspan="6"><div class="empty-state">Nhập danh sách domain rồi bấm <strong>Kiểm tra</strong>.</div></td></tr>';
+      return;
+    }
+    if (!rows.length) {
+      tbody.innerHTML = '<tr><td colspan="6"><div class="empty-state">Không có domain nào khớp bộ lọc.</div></td></tr>';
+      return;
+    }
+
+    var html = rows.map(function (row) {
+      var host = row.entry.host;
+      var ev = row.eval;
+      var status = row.entry.invalid ? "error" : (ev ? ev.status : row.status);
+      var open = !!state.expanded[host];
+      var tr = '<tr class="row" data-host="' + esc(host) + '">'
+        + '<td class="c-status">' + pill(status) + "</td>"
+        + '<td class="c-domain">' + esc(host)
+          + (row.entry.invalid ? '<div class="rec-none">Tên miền không hợp lệ</div>' : "")
+          + "</td>"
+        + '<td class="c-recs">' + (row.entry.invalid ? '<span class="rec-none">—</span>' : recChips(row)) + "</td>"
+        + '<td class="c-num">' + (ev ? fmtTtl(ev.minTtl) : "—") + "</td>"
+        + '<td class="c-num">' + (ev ? ev.ms + " ms" : "—") + "</td>"
+        + '<td class="c-num">' + (ev ? '<button class="rowbtn" data-toggle="' + esc(host) + '" aria-expanded="'
+            + (open ? "true" : "false") + '" aria-label="Chi tiết ' + esc(host) + '">' + (open ? "▴" : "▾") + "</button>" : "")
+          + "</td></tr>";
+      if (open && ev) {
+        tr += '<tr class="detail"><td colspan="6">' + detailHtml(row) + "</td></tr>";
+      }
+      return tr;
+    }).join("");
+
+    tbody.innerHTML = html;
+  }
+
+  function renderSummary() {
+    var box = $("summary");
+    if (!state.rows.length) { box.hidden = true; $("toolbar").hidden = true; return; }
+    box.hidden = false;
+    $("toolbar").hidden = false;
+
+    var counts = { ok: 0, mismatch: 0, empty: 0, nxdomain: 0, failed: 0, error: 0 };
+    state.rows.forEach(function (r) {
+      var s = r.entry.invalid ? "error" : (r.eval ? r.eval.status : null);
+      if (s && counts[s] !== undefined) counts[s]++;
+    });
+
+    var cards = [
+      { key: null, cls: "", num: state.rows.length, cap: "Tổng domain" },
+      { key: "ok", cls: "ok", num: counts.ok, cap: "Hoạt động" },
+      { key: "mismatch", cls: "warn", num: counts.mismatch, cap: "Sai giá trị" },
+      { key: "empty", cls: "info", num: counts.empty, cap: "Không bản ghi" },
+      { key: "nxdomain", cls: "crit", num: counts.nxdomain, cap: "NXDOMAIN" },
+      { key: "error", cls: "crit", num: counts.error + counts.failed, cap: "Lỗi truy vấn" }
+    ];
+
+    box.innerHTML = cards.map(function (c) {
+      var pressed = (state.filter === c.key && c.key !== null) ? "true" : "false";
+      return '<button class="stat ' + c.cls + '" type="button" aria-pressed="' + pressed + '"'
+        + ' data-filter="' + (c.key === null ? "" : c.key) + '">'
+        + '<span class="num">' + c.num + "</span>"
+        + '<span class="cap">' + c.cap + "</span></button>";
+    }).join("");
+  }
+
+  function setProgress(done, total) {
+    var bar = $("runbar");
+    if (!total) { bar.classList.remove("on"); return; }
+    bar.classList.add("on");
+    $("runCount").textContent = done + " / " + total;
+    $("runFill").style.width = Math.round((done / total) * 100) + "%";
+    if (done >= total) {
+      $("runLabel").textContent = "Hoàn tất lúc " + new Date().toLocaleTimeString("vi-VN");
+      setTimeout(function () { if (!state.running) bar.classList.remove("on"); }, 2500);
+    } else {
+      $("runLabel").textContent = "Đang truy vấn…";
+    }
+  }
+
+  /* ------------------------------------------------------------------ *
+   * Chạy kiểm tra
+   * ------------------------------------------------------------------ */
+
+  function selectedTypes() {
+    return OFFERED_TYPES.filter(function (t) {
+      var el = document.getElementById("type-" + t);
+      return el && el.checked;
+    });
+  }
+
+  function pool(items, limit, worker) {
+    var i = 0;
+    var active = [];
+    function next() {
+      if (i >= items.length) return Promise.resolve();
+      var item = items[i++];
+      var p = Promise.resolve(worker(item)).then(function () {
+        active.splice(active.indexOf(p), 1);
+      });
+      active.push(p);
+      var ready = active.length >= limit ? Promise.race(active) : Promise.resolve();
+      return ready.then(next);
+    }
+    var starters = [];
+    for (var k = 0; k < Math.min(limit, items.length); k++) starters.push(next());
+    return Promise.all(starters).then(function () { return Promise.all(active); });
+  }
+
+  function run() {
+    if (state.running) return;
+    var entries = parseList($("domains").value);
+    if (!entries.length) { toast("Chưa có domain nào để kiểm tra."); return; }
+
+    var types = selectedTypes();
+    if (!types.length) { toast("Chọn ít nhất một loại bản ghi."); return; }
+
+    var resolverKey = $("resolver").value;
+    var limit = Math.max(1, Math.min(24, parseInt($("concurrency").value, 10) || 8));
+    var timeoutMs = Math.max(1, Math.min(30, parseInt($("timeout").value, 10) || 8)) * 1000;
+
+    persist();
+
+    state.rows = entries.map(function (e) { return { entry: e, eval: null, status: "pending" }; });
+    state.running = true;
+    state.abort = new AbortController();
+    $("runBtn").disabled = true;
+    $("stopBtn").disabled = false;
+
+    var done = 0;
+    var total = state.rows.length;
+    setProgress(0, total);
+    renderSummary();
+    render();
+
+    var targets = state.rows.filter(function (r) { return !r.entry.invalid; });
+    state.rows.filter(function (r) { return r.entry.invalid; }).forEach(function () { done++; });
+
+    pool(targets, limit, function (row) {
+      row.status = "running";
+      return Promise.all(types.map(function (t) {
+        return queryOne(resolverKey, row.entry.host, t, timeoutMs, state.abort.signal);
+      })).then(function (results) {
+        row.eval = evaluate(row.entry, results);
+        row.status = row.eval.status;
+        done++;
+        setProgress(done, total);
+        renderSummary();
+        render();
+      });
+    }).then(function () {
+      state.running = false;
+      state.abort = null;
+      $("runBtn").disabled = false;
+      $("stopBtn").disabled = true;
+      setProgress(total, total);
+      renderSummary();
+      render();
+      scheduleAuto();
+    });
+  }
+
+  function stop() {
+    if (state.abort) state.abort.abort("cancelled");
+    state.running = false;
+    $("runBtn").disabled = false;
+    $("stopBtn").disabled = true;
+    $("runbar").classList.remove("on");
+  }
+
+  function scheduleAuto() {
+    clearTimeout(state.timer);
+    var sec = parseInt($("autorefresh").value, 10) || 0;
+    if (!sec) return;
+    state.timer = setTimeout(function () {
+      if (!state.running && !document.hidden) run();
+      else scheduleAuto();
+    }, sec * 1000);
+  }
+
+  /* ------------------------------------------------------------------ *
+   * So sánh nhiều resolver cho một domain
+   * ------------------------------------------------------------------ */
+
+  function compareResolvers(host, outEl) {
+    var keys = ["cloudflare", "google", "quad9", "adguard"];
+    var type = selectedTypes()[0] || "A";
+    outEl.innerHTML = '<span class="rec-none">Đang hỏi ' + keys.length + " resolver cho bản ghi " + esc(type) + "…</span>";
+    Promise.all(keys.map(function (k) {
+      return queryOne(k, host, type, 8000, null).then(function (r) { return { key: k, r: r }; });
+    })).then(function (list) {
+      var sets = list.map(function (x) {
+        return x.r.answers.map(function (a) { return a.data; }).sort().join(", ");
+      });
+      var agree = sets.every(function (s) { return s === sets[0]; });
+      var rows = list.map(function (x) {
+        var v = x.r.error ? x.r.error
+          : (x.r.answers.length ? x.r.answers.map(function (a) { return a.data; }).join(", ") : x.r.rcodeName);
+        return "<tr><td>" + esc(RESOLVERS[x.key].label) + "</td><td style=\"font-family:var(--font-mono)\">"
+          + esc(v) + "</td><td class=\"c-num\">" + x.r.ms + " ms</td></tr>";
+      }).join("");
+      outEl.innerHTML = '<table class="cmp-table"><thead><tr><th>Resolver</th><th>' + esc(type)
+        + "</th><th>Thời gian</th></tr></thead><tbody>" + rows + "</tbody></table>"
+        + '<div class="flagset"><span class="flag' + (agree ? " on" : "") + '">'
+        + (agree ? "CÁC RESOLVER ĐỒNG NHẤT" : "KẾT QUẢ KHÁC NHAU GIỮA CÁC RESOLVER") + "</span></div>";
+    });
+  }
+
+  /* ------------------------------------------------------------------ *
+   * Xuất dữ liệu
+   * ------------------------------------------------------------------ */
+
+  function toCsv() {
+    var head = ["domain", "status", "records", "min_ttl", "latency_ms", "dnssec_ad", "expected", "checked_at"];
+    var lines = [head.join(",")];
+    state.rows.forEach(function (row) {
+      var ev = row.eval;
+      var cell = [
+        row.entry.host,
+        row.entry.invalid ? "invalid" : (ev ? ev.status : "pending"),
+        ev ? ev.answers.map(function (a) { return a.type + ":" + a.data; }).join(" | ") : "",
+        ev && ev.minTtl !== null ? ev.minTtl : "",
+        ev ? ev.ms : "",
+        ev ? (ev.ad ? "yes" : "no") : "",
+        row.entry.expected.join(" | "),
+        ev ? ev.checkedAt.toISOString() : ""
+      ].map(function (v) {
+        v = String(v);
+        return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v;
+      });
+      lines.push(cell.join(","));
+    });
+    return lines.join("\n");
+  }
+
+  function toJson() {
+    return JSON.stringify(state.rows.map(function (row) {
+      var ev = row.eval;
+      return {
+        domain: row.entry.host,
+        expected: row.entry.expected,
+        status: row.entry.invalid ? "invalid" : (ev ? ev.status : "pending"),
+        dnssec_ad: ev ? ev.ad : null,
+        min_ttl: ev ? ev.minTtl : null,
+        latency_ms: ev ? ev.ms : null,
+        checked_at: ev ? ev.checkedAt.toISOString() : null,
+        records: ev ? ev.answers : []
+      };
+    }), null, 2);
+  }
+
+  function copyText(text, what) {
+    function fallback() {
+      var ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      try { document.execCommand("copy"); toast("Đã sao chép " + what + "."); }
+      catch (e) { toast("Trình duyệt chặn sao chép. Hãy dùng nút Tải CSV."); }
+      document.body.removeChild(ta);
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(function () {
+        toast("Đã sao chép " + what + ".");
+      }).catch(fallback);
+    } else { fallback(); }
+  }
+
+  function download(text, filename, mime) {
+    var blob = new Blob([text], { type: mime });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+  }
+
+  /* ------------------------------------------------------------------ *
+   * Lưu cấu hình
+   * ------------------------------------------------------------------ */
+
+  function persist() {
+    store({
+      domains: $("domains").value,
+      types: selectedTypes(),
+      resolver: $("resolver").value,
+      concurrency: $("concurrency").value,
+      timeout: $("timeout").value,
+      autorefresh: $("autorefresh").value,
+      theme: document.documentElement.getAttribute("data-theme") || ""
+    });
+  }
+
+  /* ------------------------------------------------------------------ *
+   * Giao diện sáng/tối
+   * ------------------------------------------------------------------ */
+
+  var THEMES = ["", "light", "dark"];
+  var THEME_LABEL = { "": ["◐", "Theo hệ thống"], light: ["☀", "Sáng"], dark: ["☾", "Tối"] };
+
+  function applyTheme(t) {
+    if (t) document.documentElement.setAttribute("data-theme", t);
+    else document.documentElement.removeAttribute("data-theme");
+    $("themeIcon").textContent = THEME_LABEL[t][0];
+    $("themeText").textContent = THEME_LABEL[t][1];
+  }
+
+  /* ------------------------------------------------------------------ *
+   * Khởi tạo
+   * ------------------------------------------------------------------ */
+
+  function buildTypeChips(active) {
+    $("types").innerHTML = OFFERED_TYPES.map(function (t) {
+      var on = active.indexOf(t) > -1 ? " checked" : "";
+      return '<input type="checkbox" id="type-' + t + '" value="' + t + '"' + on + ">"
+        + '<label for="type-' + t + '">' + t + "</label>";
+    }).join("");
+  }
+
+  function updateResolverNote() {
+    var key = $("resolver").value;
+    var note = $("resolverNote");
+    if (key === "proxy") {
+      note.innerHTML = "Tuỳ chọn này gọi Pages Function <code>/api/dns</code>, chỉ hoạt động sau khi deploy lên Cloudflare Pages hoặc khi chạy <code>wrangler pages dev</code>. Dùng nó khi trình duyệt bị chặn gọi thẳng resolver công cộng.";
+    } else {
+      note.innerHTML = "Trình duyệt gọi thẳng " + esc(RESOLVERS[key].label)
+        + ". Nếu mạng nội bộ chặn DoH, hãy chuyển sang tuỳ chọn <code>/api/dns</code>.";
+    }
+  }
+
+  function init() {
+    var saved = restore() || {};
+    applyTheme(THEMES.indexOf(saved.theme) > -1 ? saved.theme : "");
+    buildTypeChips(saved.types && saved.types.length ? saved.types : DEFAULT_TYPES);
+    $("domains").value = saved.domains !== undefined ? saved.domains : SAMPLE;
+    if (saved.resolver && RESOLVERS[saved.resolver]) $("resolver").value = saved.resolver;
+    if (saved.concurrency) $("concurrency").value = saved.concurrency;
+    if (saved.timeout) $("timeout").value = saved.timeout;
+    if (saved.autorefresh) $("autorefresh").value = saved.autorefresh;
+    updateResolverNote();
+
+    if (EMBEDDED) $("dlCsv").hidden = true;
+
+    $("runBtn").addEventListener("click", run);
+    $("stopBtn").addEventListener("click", stop);
+    $("clearBtn").addEventListener("click", function () {
+      stop();
+      state.rows = [];
+      state.filter = null;
+      state.expanded = {};
+      renderSummary();
+      render();
+    });
+    $("sampleBtn").addEventListener("click", function () {
+      $("domains").value = SAMPLE;
+      persist();
+      toast("Đã nạp danh sách mẫu.");
+    });
+
+    $("resolver").addEventListener("change", function () { updateResolverNote(); persist(); });
+    ["concurrency", "timeout"].forEach(function (id) {
+      $(id).addEventListener("change", persist);
+    });
+    $("autorefresh").addEventListener("change", function () { persist(); scheduleAuto(); });
+    $("domains").addEventListener("change", persist);
+    $("types").addEventListener("change", persist);
+
+    $("search").addEventListener("input", function () {
+      state.search = this.value;
+      render();
+    });
+
+    $("summary").addEventListener("click", function (e) {
+      var btn = e.target.closest("[data-filter]");
+      if (!btn) return;
+      var key = btn.getAttribute("data-filter") || null;
+      state.filter = (state.filter === key) ? null : key;
+      renderSummary();
+      render();
+    });
+
+    $("tbody").addEventListener("click", function (e) {
+      var toggle = e.target.closest("[data-toggle]");
+      if (toggle) {
+        var host = toggle.getAttribute("data-toggle");
+        state.expanded[host] = !state.expanded[host];
+        render();
+        return;
+      }
+      var cmp = e.target.closest("[data-compare]");
+      if (cmp) {
+        var h = cmp.getAttribute("data-compare");
+        var out = document.querySelector('[data-cmp-out="' + h.replace(/"/g, '\\"') + '"]');
+        if (out) compareResolvers(h, out);
+      }
+    });
+
+    $("copyCsv").addEventListener("click", function () { copyText(toCsv(), "CSV"); });
+    $("copyJson").addEventListener("click", function () { copyText(toJson(), "JSON"); });
+    $("dlCsv").addEventListener("click", function () {
+      var stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
+      download(toCsv(), "dns-status-" + stamp + ".csv", "text/csv;charset=utf-8");
+    });
+
+    $("themeBtn").addEventListener("click", function () {
+      var cur = document.documentElement.getAttribute("data-theme") || "";
+      applyTheme(THEMES[(THEMES.indexOf(cur) + 1) % THEMES.length]);
+      persist();
+    });
+
+    document.addEventListener("keydown", function (e) {
+      if ((e.ctrlKey || e.metaKey) && e.key === "Enter") { e.preventDefault(); run(); }
+    });
+
+    document.addEventListener("visibilitychange", function () {
+      if (!document.hidden) scheduleAuto();
+    });
+
+    render();
+    // Chạy ngay một lượt để trang mở ra đã có trạng thái thật thay vì bảng rỗng.
+    run();
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", init);
+  } else {
+    init();
+  }
+})();
+</script>
+</body>
+</html>
